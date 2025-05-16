@@ -159,35 +159,47 @@ def main():
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
     best_val_acc = 0.0
 
-    # bucle de entrenamiento
+    # dentro de main(), justo antes del bucle de entrenamiento:
+    patience = config.get("early_stopping_patience", 3)
+    min_delta = config.get("min_delta", 0.0)
+    no_improve_epochs = 0
+
     for epoch in range(1, config["num_epochs"] + 1):
         tloss, tacc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         vloss, vacc, vpreds, vlabels = evaluate(model, val_loader, criterion, device)
 
+        # registro histórico
         history["train_loss"].append(tloss)
         history["train_acc"].append(tacc)
         history["val_loss"].append(vloss)
         history["val_acc"].append(vacc)
-        pd.DataFrame(history).to_csv(os.path.join(run_dir, "metrics_history_partial.csv"), index=False)
+        pd.DataFrame(history).to_csv(
+            os.path.join(run_dir, "metrics_history_partial.csv"), index=False
+        )
 
-        if vacc > best_val_acc:
+        # Early Stopping / guardado mejor modelo
+        if vacc > best_val_acc + min_delta:
             best_val_acc = vacc
+            no_improve_epochs = 0
             torch.save(model.state_dict(), best_model_path)
             save_training_curves(history, os.path.join(run_dir, "best"))
             save_confusion(vlabels, vpreds, os.path.join(run_dir, "best"))
-
-            # guardar métricas del mejor modelo en validación
-            acc_txt = vacc
-            f1 = f1_score(vlabels, vpreds, average="weighted")
-            prec = precision_score(vlabels, vpreds, average="weighted")
-            rec = recall_score(vlabels, vpreds, average="weighted")
+            # guardar métricas del mejor modelo...
             with open(os.path.join(run_dir, "best_model_metrics.txt"), "w") as f:
-                f.write(f"Val Accuracy: {acc_txt:.4f}\n")
-                f.write(f"Val F1 Score: {f1:.4f}\n")
-                f.write(f"Val Precision: {prec:.4f}\n")
-                f.write(f"Val Recall: {rec:.4f}\n")
+                f.write(f"Val Accuracy: {vacc:.4f}\n")
+                f.write(f"Val F1 Score: {f1_score(vlabels, vpreds, average='weighted'):.4f}\n")
+                f.write(f"Val Precision: {precision_score(vlabels, vpreds, average='weighted'):.4f}\n")
+                f.write(f"Val Recall: {recall_score(vlabels, vpreds, average='weighted'):.4f}\n")
+            print(f"✔️ Mejor modelo guardado en epoch {epoch} (Val Acc: {vacc:.4f})")
+        else:
+            no_improve_epochs += 1
+            print(f"⚠️ Sin mejora en validación: {no_improve_epochs}/{patience} epochs")
 
-            print(f"Mejor modelo guardado en epoch {epoch} (Val Acc: {vacc:.4f})")
+        # si superamos patience, detenemos entrenamiento
+        if no_improve_epochs >= patience:
+            print(f"⏹️ Early stopping tras {patience} épocas sin mejora.")
+            break
+
 
     # evaluación final en test
     model.load_state_dict(torch.load(best_model_path))

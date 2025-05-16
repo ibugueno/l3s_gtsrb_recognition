@@ -137,29 +137,46 @@ def main():
     best_val_acc = 0
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
-    # Entrenamiento por epoch
-    for epoch in range(config["num_epochs"]):
-        train_loss, train_acc = train(model, train_loader, criterion, optimizer, device)
-        val_loss, val_acc, val_preds, val_labels = evaluate(model, val_loader, criterion, device)
+    # dentro de main(), justo antes del bucle de entrenamiento:
+    patience = config.get("early_stopping_patience", 3)
+    min_delta = config.get("min_delta", 0.0)
+    no_improve_epochs = 0
 
-        history["train_loss"].append(train_loss)
-        history["train_acc"].append(train_acc)
-        history["val_loss"].append(val_loss)
-        history["val_acc"].append(val_acc)
+    for epoch in range(1, config["num_epochs"] + 1):
+        tloss, tacc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        vloss, vacc, vpreds, vlabels = evaluate(model, val_loader, criterion, device)
 
-        pd.DataFrame(history).to_csv(os.path.join(run_dir, "metrics_history_partial.csv"), index=False)
+        # registro histórico
+        history["train_loss"].append(tloss)
+        history["train_acc"].append(tacc)
+        history["val_loss"].append(vloss)
+        history["val_acc"].append(vacc)
+        pd.DataFrame(history).to_csv(
+            os.path.join(run_dir, "metrics_history_partial.csv"), index=False
+        )
 
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        # Early Stopping / guardado mejor modelo
+        if vacc > best_val_acc + min_delta:
+            best_val_acc = vacc
+            no_improve_epochs = 0
             torch.save(model.state_dict(), best_model_path)
             save_training_curves(history, os.path.join(run_dir, "best"))
-            save_metrics_and_confusion(val_labels, val_preds, os.path.join(run_dir, "best"))
-
+            save_confusion(vlabels, vpreds, os.path.join(run_dir, "best"))
+            # guardar métricas del mejor modelo...
             with open(os.path.join(run_dir, "best_model_metrics.txt"), "w") as f:
-                f.write(f"Accuracy: {val_acc:.4f}\n")
-                f.write(f"F1 Score: {f1_score(val_labels, val_preds, average='weighted'):.4f}\n")
-                f.write(f"Precision: {precision_score(val_labels, val_preds, average='weighted'):.4f}\n")
-                f.write(f"Recall: {recall_score(val_labels, val_preds, average='weighted'):.4f}\n")
+                f.write(f"Val Accuracy: {vacc:.4f}\n")
+                f.write(f"Val F1 Score: {f1_score(vlabels, vpreds, average='weighted'):.4f}\n")
+                f.write(f"Val Precision: {precision_score(vlabels, vpreds, average='weighted'):.4f}\n")
+                f.write(f"Val Recall: {recall_score(vlabels, vpreds, average='weighted'):.4f}\n")
+            print(f"✔️ Mejor modelo guardado en epoch {epoch} (Val Acc: {vacc:.4f})")
+        else:
+            no_improve_epochs += 1
+            print(f"⚠️ Sin mejora en validación: {no_improve_epochs}/{patience} epochs")
+
+        # si superamos patience, detenemos entrenamiento
+        if no_improve_epochs >= patience:
+            print(f"⏹️ Early stopping tras {patience} épocas sin mejora.")
+            break
 
     # Evaluación final en test
     model.load_state_dict(torch.load(best_model_path))
