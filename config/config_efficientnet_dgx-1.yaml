@@ -1,0 +1,6 @@
+image_size: 224
+batch_size: 32
+num_classes: 43
+num_epochs: 20
+learning_rate: 0.0003
+model_name: EfficientNet_GTSRB

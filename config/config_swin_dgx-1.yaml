@@ -1,0 +1,7 @@
+# config/config_swin_dgx-1.yaml
+
+model_name: SwinT_GTSRB
+batch_size: 32
+num_classes: 43
+num_epochs: 20
+learning_rate: 0.0003
