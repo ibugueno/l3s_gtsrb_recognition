@@ -56,9 +56,9 @@ def prepare_dataloaders(config, transform):
 def init_model(config, device):
     weights = ConvNeXt_Tiny_Weights.IMAGENET1K_V1
     model = convnext_tiny(weights=weights)
-    # reemplazar la última capa
-    in_features = model.classifier[1].in_features
-    model.classifier[1] = nn.Linear(in_features, config["num_classes"])
+    # La capa classifier es [LayerNorm, Flatten, Linear], así que el Linear es el índice -1
+    in_features = model.classifier[-1].in_features
+    model.classifier[-1] = nn.Linear(in_features, config["num_classes"])
     return model.to(device), weights.transforms()
 
 
