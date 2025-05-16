@@ -53,7 +53,7 @@ def prepare_dataloaders(config, transform):
 
 
 def init_model(config, device):
-    weights = MobileNet_V3_Small_Weights.IMAGENET1K_V2
+    weights = MobileNet_V3_Small_Weights.IMAGENET1K_V1
     model = mobilenet_v3_small(weights=weights)
     in_features = model.classifier[-1].in_features
     model.classifier[-1] = nn.Linear(in_features, config["num_classes"])
