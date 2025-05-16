@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 
 from tqdm import tqdm
@@ -32,10 +31,19 @@ def prepare_dataloaders(config, transform):
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
+    train_loader = torch.utils.data.DataLoader(train_dataset,
+                                               batch_size=config["batch_size"],
+                                               shuffle=True,
+                                               num_workers=4)
+    val_loader = torch.utils.data.DataLoader(val_dataset,
+                                             batch_size=config["batch_size"],
+                                             shuffle=False,
+                                             num_workers=4)
     test_dataset = GTSRB(root="./data", split="test", transform=transform, download=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False)
+    test_loader = torch.utils.data.DataLoader(test_dataset,
+                                              batch_size=config["batch_size"],
+                                              shuffle=False,
+                                              num_workers=4)
 
     return train_loader, val_loader, test_loader
 
@@ -43,13 +51,14 @@ def prepare_dataloaders(config, transform):
 def init_model(config, device):
     weights = EfficientNet_B0_Weights.IMAGENET1K_V1
     model = efficientnet_b0(weights=weights)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, config["num_classes"])
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features,
+                                    config["num_classes"])
     return model.to(device), weights.transforms()
 
 
 def train(model, loader, criterion, optimizer, device):
     model.train()
-    total_loss, correct = 0, 0
+    total_loss, correct = 0.0, 0
     for images, labels in tqdm(loader, desc="Train"):
         images, labels = images.to(device), labels.to(device)
         optimizer.zero_grad()
@@ -64,7 +73,7 @@ def train(model, loader, criterion, optimizer, device):
 
 def evaluate(model, loader, criterion, device):
     model.eval()
-    total_loss, correct = 0, 0
+    total_loss, correct = 0.0, 0
     all_preds, all_labels = [], []
     with torch.no_grad():
         for images, labels in tqdm(loader, desc="Eval", leave=False):
@@ -77,24 +86,24 @@ def evaluate(model, loader, criterion, device):
             all_labels.extend(labels.cpu().numpy())
     return total_loss / len(loader.dataset), correct / len(loader.dataset), all_preds, all_labels
 
+
 def save_hyperparameters(config, run_dir):
-    """Guarda los hiperparámetros del archivo YAML como TXT legible"""
     with open(os.path.join(run_dir, "hyperparameters.txt"), "w") as f:
         for key, value in config.items():
             f.write(f"{key}: {value}\n")
 
+
 def save_metrics_and_confusion(y_true, y_pred, prefix):
     cm = confusion_matrix(y_true, y_pred)
     cm_norm = confusion_matrix(y_true, y_pred, normalize="true")
-
     pd.DataFrame(cm).to_csv(f"{prefix}_confusion_matrix_raw.csv", index=False)
     pd.DataFrame(cm_norm).to_csv(f"{prefix}_confusion_matrix_norm.csv", index=False)
 
-    ConfusionMatrixDisplay(confusion_matrix=cm).plot(cmap="Blues")
+    ConfusionMatrixDisplay(cm).plot(cmap="Blues")
     plt.savefig(f"{prefix}_confusion_matrix_raw.png")
     plt.close()
 
-    ConfusionMatrixDisplay(confusion_matrix=cm_norm).plot(cmap="Blues")
+    ConfusionMatrixDisplay(cm_norm).plot(cmap="Blues")
     plt.savefig(f"{prefix}_confusion_matrix_norm.png")
     plt.close()
 
@@ -132,19 +141,18 @@ def main():
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=config["learning_rate"])
-    best_val_acc = 0
+    best_val_acc = 0.0
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
-    # dentro de main(), justo antes del bucle de entrenamiento:
+    # Early Stopping params
     patience = config.get("early_stopping_patience", 3)
     min_delta = config.get("min_delta", 0.0)
     no_improve_epochs = 0
 
     for epoch in range(1, config["num_epochs"] + 1):
-        tloss, tacc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        tloss, tacc = train(model, train_loader, criterion, optimizer, device)
         vloss, vacc, vpreds, vlabels = evaluate(model, val_loader, criterion, device)
 
-        # registro histórico
         history["train_loss"].append(tloss)
         history["train_acc"].append(tacc)
         history["val_loss"].append(vloss)
@@ -153,14 +161,12 @@ def main():
             os.path.join(run_dir, "metrics_history_partial.csv"), index=False
         )
 
-        # Early Stopping / guardado mejor modelo
         if vacc > best_val_acc + min_delta:
             best_val_acc = vacc
             no_improve_epochs = 0
             torch.save(model.state_dict(), best_model_path)
             save_training_curves(history, os.path.join(run_dir, "best"))
-            save_confusion(vlabels, vpreds, os.path.join(run_dir, "best"))
-            # guardar métricas del mejor modelo...
+            save_metrics_and_confusion(vlabels, vpreds, os.path.join(run_dir, "best"))
             with open(os.path.join(run_dir, "best_model_metrics.txt"), "w") as f:
                 f.write(f"Val Accuracy: {vacc:.4f}\n")
                 f.write(f"Val F1 Score: {f1_score(vlabels, vpreds, average='weighted'):.4f}\n")
@@ -169,25 +175,22 @@ def main():
             print(f"✔️ Mejor modelo guardado en epoch {epoch} (Val Acc: {vacc:.4f})")
         else:
             no_improve_epochs += 1
-            print(f"⚠️ Sin mejora en validación: {no_improve_epochs}/{patience} epochs")
+            print(f"⚠️ Sin mejora: {no_improve_epochs}/{patience}")
+            if no_improve_epochs >= patience:
+                print(f"⏹️ Early stopping tras {patience} épocas sin mejora.")
+                break
 
-        # si superamos patience, detenemos entrenamiento
-        if no_improve_epochs >= patience:
-            print(f"⏹️ Early stopping tras {patience} épocas sin mejora.")
-            break
-
-    # Evaluación en test
+    # final test evaluation
     model.load_state_dict(torch.load(best_model_path))
     _, test_acc, test_preds, test_labels = evaluate(model, test_loader, criterion, device)
     save_metrics_and_confusion(test_labels, test_preds, os.path.join(run_dir, "test"))
-
     with open(os.path.join(run_dir, "test_metrics.txt"), "w") as f:
-        f.write(f"Accuracy: {test_acc:.4f}\n")
-        f.write(f"F1 Score: {f1_score(test_labels, test_preds, average='weighted'):.4f}\n")
-        f.write(f"Precision: {precision_score(test_labels, test_preds, average='weighted'):.4f}\n")
-        f.write(f"Recall: {recall_score(test_labels, test_preds, average='weighted'):.4f}\n")
+        f.write(f"Test Accuracy: {test_acc:.4f}\n")
+        f.write(f"Test F1 Score: {f1_score(test_labels, test_preds, average='weighted'):.4f}\n")
+        f.write(f"Test Precision: {precision_score(test_labels, test_preds, average='weighted'):.4f}\n")
+        f.write(f"Test Recall: {recall_score(test_labels, test_preds, average='weighted'):.4f}\n")
 
-    print(f"\nEntrenamiento finalizado. Test Acc: {test_acc:.4f}")
+    print(f"\n✅ Entrenamiento finalizado. Test Acc: {test_acc:.4f}")
 
 
 if __name__ == "__main__":
