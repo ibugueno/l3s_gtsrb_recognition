@@ -56,8 +56,7 @@ def prepare_dataloaders(config, transform):
 def init_model(config, device):
     weights = ConvNeXt_Tiny_Weights.IMAGENET1K_V1
     model = convnext_tiny(weights=weights)
-    # La capa classifier es [LayerNorm, Flatten, Linear], así que el Linear es el índice -1
-    in_features = model.classifier[-1].in_features
+    in_features = model.classifier[-1].in_features # The layer classifier is [LayerNorm, Flatten, Linear], so the Linear is index -1
     model.classifier[-1] = nn.Linear(in_features, config["num_classes"])
     return model.to(device), weights.transforms()
 
@@ -139,18 +138,18 @@ def save_confusion(y_true, y_pred, prefix):
 
 
 def main():
-    # cargar configuración
+    # load settings
     config = load_config()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # directorio de resultados
+    # results folder
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     run_dir = os.path.join("runs", f"{config['model_name']}_{ts}")
     os.makedirs(run_dir, exist_ok=True)
     save_hyperparameters(config, run_dir)
     best_model_path = os.path.join(run_dir, "best_model.pth")
 
-    # inicializar modelo y datos
+    # initialize model and data
     model, transform = init_model(config, device)
     train_loader, val_loader, test_loader = prepare_dataloaders(config, transform)
 
@@ -159,7 +158,6 @@ def main():
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
     best_val_acc = 0.0
 
-    # dentro de main(), justo antes del bucle de entrenamiento:
     patience = config.get("early_stopping_patience", 3)
     min_delta = config.get("min_delta", 0.0)
     no_improve_epochs = 0
@@ -168,7 +166,6 @@ def main():
         tloss, tacc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         vloss, vacc, vpreds, vlabels = evaluate(model, val_loader, criterion, device)
 
-        # registro histórico
         history["train_loss"].append(tloss)
         history["train_acc"].append(tacc)
         history["val_loss"].append(vloss)
@@ -177,31 +174,30 @@ def main():
             os.path.join(run_dir, "metrics_history_partial.csv"), index=False
         )
 
-        # Early Stopping / guardado mejor modelo
+        # Early Stopping / best model saved
         if vacc > best_val_acc + min_delta:
             best_val_acc = vacc
             no_improve_epochs = 0
             torch.save(model.state_dict(), best_model_path)
             save_training_curves(history, os.path.join(run_dir, "best"))
             save_confusion(vlabels, vpreds, os.path.join(run_dir, "best"))
-            # guardar métricas del mejor modelo...
+            # save metrics of the best model
             with open(os.path.join(run_dir, "best_model_metrics.txt"), "w") as f:
                 f.write(f"Val Accuracy: {vacc:.4f}\n")
                 f.write(f"Val F1 Score: {f1_score(vlabels, vpreds, average='weighted'):.4f}\n")
                 f.write(f"Val Precision: {precision_score(vlabels, vpreds, average='weighted'):.4f}\n")
                 f.write(f"Val Recall: {recall_score(vlabels, vpreds, average='weighted'):.4f}\n")
-            print(f"✔️ Mejor modelo guardado en epoch {epoch} (Val Acc: {vacc:.4f})")
+            print(f"Best model saved in epoch {epoch} (Val Acc: {vacc:.4f})")
         else:
             no_improve_epochs += 1
-            print(f"⚠️ Sin mejora en validación: {no_improve_epochs}/{patience} epochs")
+            print(f"No improvement in validation: {no_improve_epochs}/{patience} epochs")
 
-        # si superamos patience, detenemos entrenamiento
         if no_improve_epochs >= patience:
-            print(f"⏹️ Early stopping tras {patience} épocas sin mejora.")
+            print(f"Early stopping after {patience} epochs without improvement")
             break
 
 
-    # evaluación final en test
+    # final test evaluation
     model.load_state_dict(torch.load(best_model_path))
     _, test_acc, tpreds, tlabels = evaluate(model, test_loader, criterion, device)
     save_confusion(tlabels, tpreds, os.path.join(run_dir, "test"))
@@ -214,7 +210,7 @@ def main():
         f.write(f"Test Precision: {test_prec:.4f}\n")
         f.write(f"Test Recall: {test_rec:.4f}\n")
 
-    print(f"\nEntrenamiento completo — Test Acc: {test_acc:.4f}")
+    print(f"\nTraining done — Test Acc: {test_acc:.4f}")
 
 
 if __name__ == "__main__":
